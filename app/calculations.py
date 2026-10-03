@@ -61,6 +61,9 @@ def subscription_economics(
         "payback_months": payback_months,
         "break_even_customers": break_even_customers,
         "break_even_revenue": break_even_customers * r["average_check"] if break_even_customers else None,
+        "fixed_costs": fixed_costs,
+        "revenue": revenue,
+        "current_customers": revenue / r["average_check"],
     }
 
 
@@ -92,6 +95,9 @@ def transactional_economics(
         "payback_months": payback_months,
         "break_even_customers": break_even_customers,
         "break_even_revenue": break_even_customers * r["average_check"] if break_even_customers else None,
+        "fixed_costs": fixed_costs,
+        "revenue": revenue,
+        "current_customers": revenue / (r["average_check"] * orders_per_customer_month),
     }
 
 
@@ -135,6 +141,7 @@ def b2b_economics(
         "payback_months": payback_months,
         "break_even_customers": break_even_customers,
         "break_even_revenue": break_even_customers * annual_revenue_per_customer if break_even_customers else None,
+        "fixed_costs": fixed_costs,
     }
 
 
