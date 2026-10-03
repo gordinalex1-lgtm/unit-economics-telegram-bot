@@ -18,6 +18,7 @@ app = FastAPI(title="Unit Economics Telegram Bot")
 
 WEBHOOK_URL = f"{settings.webhook_base_url.strip().rstrip('/')}/telegram/webhook"
 _webhook_task: asyncio.Task | None = None
+_db_task: asyncio.Task | None = None
 
 
 @dp.message(CommandStart())
@@ -77,6 +78,14 @@ async def health():
     return {"status": "healthy"}
 
 
+async def init_database():
+    try:
+        await asyncio.wait_for(db.init(), timeout=15)
+        logging.info("Database initialized successfully")
+    except Exception:
+        logging.exception("Database initialization failed; application remains available")
+
+
 async def register_webhook():
     await asyncio.sleep(5)
     for attempt in range(1, 6):
@@ -97,15 +106,22 @@ async def register_webhook():
 
 @app.on_event("startup")
 async def startup():
-    global _webhook_task
-    await db.init()
+    global _webhook_task, _db_task
+    _db_task = asyncio.create_task(init_database())
     _webhook_task = asyncio.create_task(register_webhook())
-    logging.info("Application started; webhook registration scheduled")
+    logging.info("Application started; database and webhook initialization scheduled")
 
 
 @app.on_event("shutdown")
 async def shutdown():
-    global _webhook_task
+    global _webhook_task, _db_task
+    if _db_task is not None:
+        _db_task.cancel()
+        try:
+            await _db_task
+        except asyncio.CancelledError:
+            pass
+
     if _webhook_task is not None:
         _webhook_task.cancel()
         try:
