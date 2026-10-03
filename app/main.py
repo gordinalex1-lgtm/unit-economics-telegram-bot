@@ -15,7 +15,7 @@ from app.calculations import (
     b2b_economics,
     target_profit_scenario,
 )
-from app.ai import ask, analyze_unit_economics, deterministic_analysis
+from app.ai import ask, analyze_unit_economics, deterministic_analysis, deterministic_goal_analysis
 
 logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
 
@@ -148,6 +148,7 @@ async def goal_(m: Message):
             lines.insert(3, f"Дополнительно клиентов: {scenario['additional_customers']:.1f}")
 
         analysis = None
+        analysis_source = "fallback"
         try:
             analysis = await asyncio.wait_for(
                 ask(
@@ -158,14 +159,20 @@ async def goal_(m: Message):
                 ),
                 timeout=25,
             )
+            if analysis and analysis.strip():
+                analysis_source = "ai"
         except Exception:
             logging.exception("AI goal analysis failed")
+            analysis = deterministic_goal_analysis(scenario)
+
+        if not analysis:
+            analysis = deterministic_goal_analysis(scenario)
+        if len(analysis) > 2500:
+            analysis = analysis[:2500].rsplit(" ", 1)[0] + "…"
 
         response = "📊 Сценарий достижения цели\n\n" + "\n".join(lines)
-        if analysis:
-            if len(analysis) > 2500:
-                analysis = analysis[:2500].rsplit(" ", 1)[0] + "…"
-            response += "\n\n🤖 AI-анализ\n" + analysis
+        label = "🤖 AI-анализ" if analysis_source == "ai" else "📌 Анализ и рекомендации"
+        response += "\n\n" + label + "\n" + analysis
         response += "\n\nОснова: последний расчёт из /history."
         await m.answer(response)
     except ValueError as e:
@@ -261,10 +268,7 @@ async def text_(m: Message):
                 logging.exception("Failed to save calculation history")
 
             response = "✅ Расчёт готов\\n\\n" + metrics
-            if analysis:
-                response += "\\n\\n🤖 AI-анализ\\n" + analysis
-            else:
-                response += "\\n\\n🤖 Анализ и рекомендации\\n" + deterministic_analysis(r)
+            response += "\\n\\n📌 Анализ и рекомендации\\n" + analysis
             response += "\\n\\nИстория: /history · Новый расчёт: /calc"
             return await m.answer(response)
 
@@ -287,14 +291,10 @@ async def text_(m: Message):
         else:
             return await m.answer("Используйте /start или /calc.")
         metrics = _fmt(r)
-        try:
-            analysis = await asyncio.wait_for(analyze_unit_economics(r), timeout=25)
-            if len(analysis) > 3200:
-                analysis = analysis[:3200].rsplit(" ", 1)[0] + "…"
-            await m.answer(metrics + "\n\n🤖 AI-анализ\n" + analysis)
-        except Exception:
-            logging.exception("AI analysis failed after legacy calculation")
-            await m.answer(metrics + "\n\n🤖 AI-анализ временно недоступен.")
+        analysis = await asyncio.wait_for(analyze_unit_economics(r), timeout=25)
+        if len(analysis) > 3200:
+            analysis = analysis[:3200].rsplit(" ", 1)[0] + "…"
+        await m.answer(metrics + "\n\n📌 Анализ и рекомендации\n" + analysis)
     except ValueError as e:
         await m.answer(f"Ошибка: {e}")
     except Exception:
