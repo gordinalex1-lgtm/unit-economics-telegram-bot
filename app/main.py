@@ -190,37 +190,27 @@ async def text_(m: Message):
             analysis = None
             try:
                 analysis = await asyncio.wait_for(analyze_unit_economics(r), timeout=25)
-
                 if len(analysis) > 3200:
                     analysis = analysis[:3200].rsplit(" ", 1)[0] + "…"
-                try:
-                    await db.save_calculation(
-                        user_id, model, json.dumps(values, ensure_ascii=False),
-                        json.dumps(r, ensure_ascii=False), analysis
-                    )
-                except Exception:
-                    logging.exception("Failed to save calculation history")
-                return await m.answer(
-                    "✅ Расчёт готов\n\n" + metrics +
-                    "\n\n🤖 AI-анализ\n" + analysis +
-                    "\n\nИстория: /history · Новый расчёт: /calc"
-                )
             except Exception:
                 logging.exception("AI analysis failed after guided calculation")
-                return await m.answer(
-                    try:
-                        await db.save_calculation(
-                            user_id, model, json.dumps(values, ensure_ascii=False),
-                            json.dumps(r, ensure_ascii=False), None
-                        )
-                    except Exception:
-                        logging.exception("Failed to save calculation history")
-                    return await m.answer(
-                        "✅ Расчёт готов\n\n" + metrics +
-                        "\n\n🤖 AI-анализ временно недоступен. Сам расчёт выполнен корректно." +
-                        "\n\nИстория: /history · Новый расчёт: /calc"
-                    )
+
+            try:
+                await db.save_calculation(
+                    user_id, model, json.dumps(values, ensure_ascii=False),
+                    json.dumps(r, ensure_ascii=False), analysis
                 )
+            except Exception:
+                logging.exception("Failed to save calculation history")
+
+            response = "✅ Расчёт готов\\n\\n" + metrics
+            if analysis:
+                response += "\\n\\n🤖 AI-анализ\\n" + analysis
+            else:
+                response += "\\n\\n🤖 AI-анализ временно недоступен. Сам расчёт выполнен корректно."
+            response += "\\n\\nИстория: /history · Новый расчёт: /calc"
+            return await m.answer(response)
+
         except ValueError as e:
             USER_FLOWS.pop(user_id, None)
             return await m.answer(f"Ошибка: {e}\nНачните новый расчёт: /calc")
