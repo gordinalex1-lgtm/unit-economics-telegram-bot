@@ -22,7 +22,6 @@ class Calculation(Base):
     kind: Mapped[str] = mapped_column(String(64))
     payload: Mapped[str] = mapped_column(Text)
     result: Mapped[str] = mapped_column(Text)
-    analysis: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -38,7 +37,7 @@ class Database:
             await conn.run_sync(Base.metadata.create_all)
 
     async def save_calculation(
-        self, telegram_id: int, kind: str, payload: str, result: str, analysis: str | None
+        self, telegram_id: int, kind: str, payload: str, result: str
     ):
         async with self.session() as session:
             session.add(
@@ -47,7 +46,6 @@ class Database:
                     kind=kind,
                     payload=payload,
                     result=result,
-                    analysis=analysis,
                 )
             )
             await session.commit()
