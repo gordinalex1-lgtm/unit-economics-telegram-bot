@@ -8,7 +8,11 @@ from aiogram.filters import CommandStart, Command
 from aiogram.types import Message
 from app.config import settings
 from app.db import db
-from app.calculations import unit_economics
+from app.calculations import (
+    subscription_economics,
+    transactional_economics,
+    b2b_economics,
+)
 from app.ai import ask
 
 logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
@@ -26,12 +30,33 @@ _db_task: asyncio.Task | None = None
 
 @dp.message(CommandStart())
 async def start(m: Message):
-    await m.answer("Привет! Я консультант по юнит-экономике.\n\n/calc — расчёт\n/ask — вопрос AI\n/help — помощь")
+    await m.answer(
+        "Привет! Я консультант по юнит-экономике.\n\n"
+        "/calc subscription — подписка\n"
+        "/calc transaction — разовые продажи\n"
+        "/calc b2b — B2B\n"
+        "/ask — вопрос AI\n"
+        "/help — помощь"
+    )
 
 
 @dp.message(Command("help"))
 async def help_(m: Message):
-    await m.answer("Для AI: /ask У меня CAC 12000, чек 35000, маржа 40%, отток 5%. Что улучшить?")
+    await m.answer(
+        "Модели LTV/CAC:\n"
+        "• /calc subscription — подписка\n"
+        "• /calc transaction — разовые/повторные продажи\n"
+        "• /calc b2b — B2B с годовой экономикой клиента\n\n"
+        "Пример подписки:\n"
+        "/calc subscription\n"
+        "1000000 200000 50 100 400000 0.05 250000\n\n"
+        "Пример transaction:\n"
+        "/calc transaction\n"
+        "1000000 200000 50 100 400000 2 18 250000\n\n"
+        "Пример B2B:\n"
+        "/calc b2b\n"
+        "1200000 300000 20 400000 0.10 500000"
+    )
 
 
 @dp.message(Command("ask"))
@@ -48,27 +73,58 @@ async def ask_(m: Message):
 
 @dp.message(Command("calc"))
 async def calc_(m: Message):
-    await m.answer("Пришлите 7 чисел: выручка маркетинг новые_клиенты заказы себестоимость отток фиксированные_расходы\nПример: 1000000 200000 50 100 400000 0.05 250000")
+    parts = (m.text or "").split()
+    if len(parts) == 1:
+        return await m.answer(
+            "Выберите модель: /calc subscription, /calc transaction или /calc b2b.\n"
+            "Затем отправьте числа отдельным сообщением. /help — примеры."
+        )
+    model = parts[1].lower()
+    prompts = {
+        "subscription": "Подписка: пришлите 7 чисел: выручка маркетинг новые_клиенты заказы себестоимость месячный_отток фиксированные_расходы",
+        "transaction": "Разовые продажи: 8 чисел: выручка маркетинг новые_клиенты заказы себестоимость заказов_на_клиента_в_месяц срок_жизни_месяцев фиксированные_расходы",
+        "b2b": "B2B: 6 чисел: годовая_выручка_с_клиента маркетинг новые_клиенты годовая_себестоимость_на_клиента годовой_отток фиксированные_расходы",
+    }
+    if model not in prompts:
+        return await m.answer("Модель не найдена. Используйте subscription, transaction или b2b.")
+    await m.answer(prompts[model])
+
+
+def _fmt(r):
+    lines = [f"CAC: {r['CAC']:.0f} ₽", f"LTV: {r['LTV']:.0f} ₽", f"LTV/CAC: {r['LTV_CAC']:.2f}"]
+    if r.get("average_check") is not None:
+        lines += [f"Средний чек: {r['average_check']:.0f} ₽", f"Валовая маржа: {r['gross_margin']:.1%}"]
+    if r.get("annual_gross_margin") is not None:
+        lines += [f"Годовая валовая маржа: {r['annual_gross_margin']:.1%}"]
+    if r.get("expected_lifetime_months") is not None:
+        lines.append(f"Ожидаемый срок жизни: {r['expected_lifetime_months']:.1f} мес.")
+    if r.get("expected_lifetime_years") is not None:
+        lines.append(f"Ожидаемый срок жизни: {r['expected_lifetime_years']:.1f} лет")
+    if r.get("payback_months") is not None:
+        lines.append(f"Окупаемость CAC: {r['payback_months']:.1f} мес.")
+    if r.get("break_even_customers") is not None:
+        lines.append(f"Точка безубыточности: {r['break_even_customers']:.1f} клиентов")
+    return "\n".join(lines)
 
 
 @dp.message()
 async def text_(m: Message):
     p = (m.text or "").replace(",", ".").split()
-    if len(p) != 7:
-        return await m.answer("Не понял. Используйте /help или /ask.")
     try:
-        r = unit_economics(*map(float, p))
-        await m.answer(
-            f"CAC: {r['CAC']:.0f} ₽\n"
-            f"Средний чек: {r['average_check']:.0f} ₽\n"
-            f"Валовая маржа: {r['gross_margin']:.1%}\n"
-            f"LTV: {r['LTV']:.0f} ₽\n"
-            f"LTV/CAC: {r['LTV_CAC']:.2f}\n"
-            f"Окупаемость CAC: {r['payback_months']:.2f} мес.\n"
-            f"Точка безубыточности: {r['break_even_customers']:.1f} клиентов"
-        )
-    except Exception as e:
+        if len(p) == 7:
+            r = subscription_economics(*map(float, p))
+        elif len(p) == 8:
+            r = transactional_economics(*map(float, p))
+        elif len(p) == 6:
+            r = b2b_economics(*map(float, p))
+        else:
+            return await m.answer("Не понял. Используйте /help.")
+        await m.answer(_fmt(r))
+    except ValueError as e:
         await m.answer(f"Ошибка: {e}")
+    except Exception:
+        logging.exception("Calculation failed")
+        await m.answer("Не удалось выполнить расчёт. Проверьте исходные данные.")
 
 
 @app.get("/")
@@ -124,16 +180,13 @@ async def shutdown():
             await _db_task
         except asyncio.CancelledError:
             pass
-
     if _webhook_task is not None:
         _webhook_task.cancel()
         try:
             await _webhook_task
         except asyncio.CancelledError:
             pass
-    # Do not delete the webhook on shutdown.
-    # During a rolling deploy, the old instance can shut down after the new
-    # instance has registered the webhook and would otherwise remove it.
+    # Do not delete the webhook during a rolling deploy.
     try:
         await bot.session.close()
     finally:
