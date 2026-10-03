@@ -125,6 +125,46 @@ def _fmt(r):
 
 @dp.message()
 async def text_(m: Message):
+    user_id = m.from_user.id
+    flow = USER_FLOWS.get(user_id)
+    if flow:
+        raw = (m.text or "").replace(",", ".").strip()
+        try:
+            value = float(raw)
+        except ValueError:
+            return await m.answer("Введите одно число, например: 250000")
+
+        flow["values"].append(value)
+        step = len(flow["values"])
+        total = len(flow["questions"])
+
+        if step < total:
+            return await m.answer(
+                f"Шаг {step + 1}/{total}\n{flow['questions'][step]}\n\nВведите только число."
+            )
+
+        try:
+            model = flow["model"]
+            values = flow["values"]
+            if model == "subscription":
+                r = subscription_economics(*values)
+            elif model == "transaction":
+                r = transactional_economics(*values)
+            else:
+                r = b2b_economics(*values)
+            USER_FLOWS.pop(user_id, None)
+            return await m.answer(
+                "✅ Расчёт готов\n\n" + _fmt(r) +
+                "\n\nЧтобы сделать новый расчёт: /calc"
+            )
+        except ValueError as e:
+            USER_FLOWS.pop(user_id, None)
+            return await m.answer(f"Ошибка: {e}\nНачните новый расчёт: /calc")
+        except Exception:
+            logging.exception("Guided calculation failed")
+            USER_FLOWS.pop(user_id, None)
+            return await m.answer("Не удалось выполнить расчёт. Начните новый: /calc")
+
     p = (m.text or "").replace(",", ".").split()
     try:
         if len(p) == 7:
@@ -134,7 +174,7 @@ async def text_(m: Message):
         elif len(p) == 6:
             r = b2b_economics(*map(float, p))
         else:
-            return await m.answer("Не понял. Используйте /help.")
+            return await m.answer("Используйте /start или /calc.")
         await m.answer(_fmt(r))
     except ValueError as e:
         await m.answer(f"Ошибка: {e}")
