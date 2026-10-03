@@ -24,4 +24,6 @@ class Database:
         self.session=async_sessionmaker(self.engine,expire_on_commit=False,class_=AsyncSession)
     async def init(self):
         async with self.engine.begin() as conn: await conn.run_sync(Base.metadata.create_all)
+    async def close(self):
+        await self.engine.dispose()
 db=Database(settings.database_url)
