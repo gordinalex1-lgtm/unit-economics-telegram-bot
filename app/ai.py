@@ -104,3 +104,30 @@ async def analyze_unit_economics(result: dict) -> str:
     except Exception:
         pass
     return deterministic_analysis(result)
+
+
+def deterministic_goal_analysis(scenario: dict) -> str:
+    """Fallback recommendations for target-profit scenarios."""
+    target = scenario.get("target_monthly_profit", 0)
+    customers = scenario.get("required_customers")
+    revenue = scenario.get("required_monthly_revenue")
+    contribution = scenario.get("monthly_contribution_per_customer")
+    max_cac_6 = scenario.get("max_cac_6m_payback")
+    max_cac_12 = scenario.get("max_cac_12m_payback")
+    additional = scenario.get("additional_customers")
+
+    lines = [
+        "1. Диагноз — цель достижима через комбинацию количества клиентов и вклада с одного клиента.",
+        f"2. Ключевой показатель — вклад одного клиента: {contribution:,.0f} ₽/мес.; при текущей модели требуется около {customers:.1f} клиентов и {revenue:,.0f} ₽ выручки в месяц.",
+        "3. Риски — рост клиентской базы без контроля CAC может ухудшить денежный результат; снижение цены может увеличить выручку, но уменьшить вклад; расчёт зависит от качества исходных данных."
+    ]
+    actions = [
+        f"Проверить план привлечения до {customers:.1f} клиентов и отдельно определить допустимый CAC: до {max_cac_6:,.0f} ₽ при цели окупить привлечение за 6 месяцев.",
+        f"Рассмотреть рост вклада с клиента выше {contribution:,.0f} ₽ через цену, валовую маржу и повторные продажи — это снижает требуемое число клиентов.",
+        f"Если нужно удерживать окупаемость CAC до 12 месяцев, ориентир по максимальному CAC — {max_cac_12:,.0f} ₽.",
+    ]
+    if additional is not None:
+        actions.append(f"От текущей базы требуется дополнительно около {additional:.1f} клиентов.")
+    lines.append("4. Действия — " + " ".join(actions))
+    lines.append("5. Что проверить — текущую клиентскую базу, фактический CAC по каналам, вклад после переменных расходов и реальную конверсию в новых клиентов.")
+    return "\n".join(lines)
