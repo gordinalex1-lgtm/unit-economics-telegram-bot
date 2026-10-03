@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 
 from fastapi import FastAPI, Request, HTTPException
 from aiogram import Bot, Dispatcher, types
@@ -16,7 +17,9 @@ bot = Bot(settings.bot_token)
 dp = Dispatcher()
 app = FastAPI(title="Unit Economics Telegram Bot")
 
-WEBHOOK_URL = f"{settings.webhook_base_url.strip().rstrip('/')}/telegram/webhook"
+_render_host = os.getenv("RENDER_EXTERNAL_HOSTNAME", "").strip()
+WEBHOOK_BASE_URL = (settings.webhook_base_url.strip() or (f"https://{_render_host}" if _render_host else "")).rstrip("/")
+WEBHOOK_URL = f"{WEBHOOK_BASE_URL}/telegram/webhook"
 _webhook_task: asyncio.Task | None = None
 _db_task: asyncio.Task | None = None
 
