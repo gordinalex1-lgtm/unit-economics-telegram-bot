@@ -143,3 +143,51 @@ def unit_economics(revenue, marketing_spend, new_customers, orders, cogs, churn,
     return subscription_economics(
         revenue, marketing_spend, new_customers, orders, cogs, churn, fixed_costs
     )
+
+
+def target_profit_scenario(result: dict, target_monthly_profit: float) -> dict:
+    """Calculate deterministic operating targets for a desired monthly profit."""
+    if target_monthly_profit < 0:
+        raise ValueError("Целевая прибыль не может быть отрицательной")
+
+    business_type = result.get("business_type")
+    fixed_costs = result.get("fixed_costs", 0)
+    if fixed_costs is None:
+        fixed_costs = 0
+
+    if business_type == "b2b":
+        monthly_contribution = result["annual_contribution"] / 12
+        monthly_revenue_per_customer = result["annual_revenue_per_customer"] / 12
+    else:
+        if business_type == "transactional":
+            monthly_contribution = result["monthly_contribution"]
+            monthly_revenue_per_customer = (
+                result["average_check"] * result["orders_per_customer_month"]
+            )
+        else:
+            monthly_contribution = result["contribution_per_order"]
+            monthly_revenue_per_customer = result["average_check"]
+
+    if monthly_contribution <= 0:
+        raise ValueError("Нельзя рассчитать цель: вклад клиента в прибыль должен быть больше 0")
+
+    required_customers = (fixed_costs + target_monthly_profit) / monthly_contribution
+    required_revenue = required_customers * monthly_revenue_per_customer
+    current_revenue = result.get("revenue")
+    current_customers = result.get("current_customers")
+    additional_customers = (
+        max(0, required_customers - current_customers)
+        if current_customers is not None
+        else None
+    )
+
+    return {
+        "target_monthly_profit": target_monthly_profit,
+        "required_customers": required_customers,
+        "required_monthly_revenue": required_revenue,
+        "additional_customers": additional_customers,
+        "monthly_contribution_per_customer": monthly_contribution,
+        "max_cac_6m_payback": monthly_contribution * 6,
+        "max_cac_12m_payback": monthly_contribution * 12,
+        "business_type": business_type,
+    }
