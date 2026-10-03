@@ -5,7 +5,7 @@ import os
 from fastapi import FastAPI, Request, HTTPException
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart, Command
-from aiogram.types import Message
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from app.config import settings
 from app.db import db
 from app.calculations import (
@@ -28,66 +28,82 @@ _webhook_task: asyncio.Task | None = None
 _db_task: asyncio.Task | None = None
 
 
+
+
+USER_FLOWS: dict[int, dict] = {}
+
 @dp.message(CommandStart())
 async def start(m: Message):
     await m.answer(
-        "Привет! Я консультант по юнит-экономике.\n\n"
-        "/calc subscription — подписка\n"
-        "/calc transaction — разовые продажи\n"
-        "/calc b2b — B2B\n"
-        "/ask — вопрос AI\n"
-        "/help — помощь"
+        "Привет! Я консультант по юнит-экономике.\\n\\n"
+        "Выберите модель бизнеса:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📦 Подписка", callback_data="model:subscription")],
+            [InlineKeyboardButton(text="🛒 Разовые продажи", callback_data="model:transaction")],
+            [InlineKeyboardButton(text="🏢 B2B", callback_data="model:b2b")],
+        ]),
     )
+
+
+@dp.callback_query(lambda c: c.data and c.data.startswith("model:"))
+async def choose_model(c: CallbackQuery):
+    model = c.data.split(":", 1)[1]
+    labels = {
+        "subscription": ("Подписка", [
+            "Выручка за месяц (₽)?",
+            "Маркетинговые расходы за месяц (₽)?",
+            "Новые клиентов за месяц?",
+            "Количество заказов за месяц?",
+            "Себестоимость за месяц (₽)?",
+            "Месячный churn (например 0.05 = 5%)?",
+            "Фиксированные расходы за месяц (₽)?",
+        ]),
+        "transaction": ("Разовые/повторные продажи", [
+            "Выручка за месяц (₽)?",
+            "Маркетинговые расходы за месяц (₽)?",
+            "Новые клиентов за месяц?",
+            "Количество заказов за месяц?",
+            "Себестоимость за месяц (₽)?",
+            "Сколько заказов в месяц делает один клиент?",
+            "Средний срок жизни клиента (месяцев)?",
+            "Фиксированные расходы за месяц (₽)?",
+        ]),
+        "b2b": ("B2B", [
+            "Годовая выручка с одного клиента (₽)?",
+            "Маркетинговые расходы за год (₽)?",
+            "Новых клиентов за год?",
+            "Годовая себестоимость на одного клиента (₽)?",
+            "Годовой churn (например 0.10 = 10%)?",
+            "Фиксированные расходы за месяц (₽)?",
+        ]),
+    }
+    if model not in labels:
+        return await c.answer("Неизвестная модель", show_alert=True)
+    title, questions = labels[model]
+    USER_FLOWS[c.from_user.id] = {"model": model, "values": [], "questions": questions}
+    await c.answer()
+    await c.message.answer(f"Модель: {title}\\n\\nШаг 1/{len(questions)}\\n{questions[0]}\\n\\nВведите только число.")
 
 
 @dp.message(Command("help"))
 async def help_(m: Message):
     await m.answer(
-        "Модели LTV/CAC:\n"
-        "• /calc subscription — подписка\n"
-        "• /calc transaction — разовые/повторные продажи\n"
-        "• /calc b2b — B2B с годовой экономикой клиента\n\n"
-        "Пример подписки:\n"
-        "/calc subscription\n"
-        "1000000 200000 50 100 400000 0.05 250000\n\n"
-        "Пример transaction:\n"
-        "/calc transaction\n"
-        "1000000 200000 50 100 400000 2 18 250000\n\n"
-        "Пример B2B:\n"
-        "/calc b2b\n"
-        "1200000 300000 20 400000 0.10 500000"
+        "Выберите модель через /calc или /start.\\n\\n"
+        "Бот задаст вопросы по одному и после последнего покажет CAC, LTV, LTV/CAC, окупаемость CAC и точку безубыточности.\\n\\n"
+        "Для AI: /ask ваш вопрос."
     )
-
-
-@dp.message(Command("ask"))
-async def ask_(m: Message):
-    q = (m.text or "").partition(" ")[2].strip()
-    if not q:
-        return await m.answer("После /ask напишите вопрос.")
-    try:
-        await m.answer(await ask(q))
-    except Exception:
-        logging.exception("AI request failed")
-        await m.answer("Ошибка обращения к OpenRouter.")
 
 
 @dp.message(Command("calc"))
 async def calc_(m: Message):
-    parts = (m.text or "").split()
-    if len(parts) == 1:
-        return await m.answer(
-            "Выберите модель: /calc subscription, /calc transaction или /calc b2b.\n"
-            "Затем отправьте числа отдельным сообщением. /help — примеры."
-        )
-    model = parts[1].lower()
-    prompts = {
-        "subscription": "Подписка: пришлите 7 чисел: выручка маркетинг новые_клиенты заказы себестоимость месячный_отток фиксированные_расходы",
-        "transaction": "Разовые продажи: 8 чисел: выручка маркетинг новые_клиенты заказы себестоимость заказов_на_клиента_в_месяц срок_жизни_месяцев фиксированные_расходы",
-        "b2b": "B2B: 6 чисел: годовая_выручка_с_клиента маркетинг новые_клиенты годовая_себестоимость_на_клиента годовой_отток фиксированные_расходы",
-    }
-    if model not in prompts:
-        return await m.answer("Модель не найдена. Используйте subscription, transaction или b2b.")
-    await m.answer(prompts[model])
+    await m.answer(
+        "Выберите модель:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📦 Подписка", callback_data="model:subscription")],
+            [InlineKeyboardButton(text="🛒 Разовые продажи", callback_data="model:transaction")],
+            [InlineKeyboardButton(text="🏢 B2B", callback_data="model:b2b")],
+        ]),
+    )
 
 
 def _fmt(r):
