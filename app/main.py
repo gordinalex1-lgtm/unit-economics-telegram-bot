@@ -1,7 +1,7 @@
 import asyncio
+import json
 import logging
 import os
-import asyncio
 
 from fastapi import FastAPI, Request, HTTPException
 from aiogram import Bot, Dispatcher, types
@@ -86,12 +86,44 @@ async def choose_model(c: CallbackQuery):
     await c.message.answer(f"Модель: {title}\\n\\nШаг 1/{len(questions)}\\n{questions[0]}\\n\\nВведите только число.")
 
 
+@dp.message(Command("cancel"))
+async def cancel_(m: Message):
+    if USER_FLOWS.pop(m.from_user.id, None) is not None:
+        await m.answer("Расчёт отменён. Для нового расчёта: /calc")
+    else:
+        await m.answer("Активного расчёта нет.")
+
+
+@dp.message(Command("history"))
+async def history_(m: Message):
+    try:
+        items = await db.history(m.from_user.id, limit=5)
+        if not items:
+            return await m.answer("История пока пуста. Сделайте первый расчёт через /calc.")
+        lines = ["📚 Последние расчёты:"]
+        for i, item in enumerate(items, 1):
+            data = json.loads(item.result)
+            ltv_cac = data.get("LTV_CAC")
+            ltv_cac_text = f"{ltv_cac:.2f}" if isinstance(ltv_cac, (int, float)) else "—"
+            created = item.created_at.strftime("%d.%m %H:%M") if item.created_at else "—"
+            lines.append(
+                f"\\n{i}. {created} · {item.kind}\\n"
+                f"CAC {data.get('CAC', 0):.0f} ₽ · "
+                f"LTV {data.get('LTV', 0):.0f} ₽ · "
+                f"LTV/CAC {ltv_cac_text}"
+            )
+        await m.answer("".join(lines))
+    except Exception:
+        logging.exception("History read failed")
+        await m.answer("Не удалось загрузить историю. Попробуйте ещё раз.")
+
+
 @dp.message(Command("help"))
 async def help_(m: Message):
     await m.answer(
         "Выберите модель через /calc или /start.\\n\\n"
         "Бот задаст вопросы по одному и после последнего покажет CAC, LTV, LTV/CAC, окупаемость CAC и точку безубыточности.\\n\\n"
-        "Для AI: /ask ваш вопрос."
+        "Для AI: /ask ваш вопрос.\n\nИстория расчётов: /history. Отмена текущего ввода: /cancel."
     )
 
 
@@ -155,21 +187,39 @@ async def text_(m: Message):
                 r = b2b_economics(*values)
             USER_FLOWS.pop(user_id, None)
             metrics = _fmt(r)
+            analysis = None
             try:
                 analysis = await asyncio.wait_for(analyze_unit_economics(r), timeout=25)
+
                 if len(analysis) > 3200:
                     analysis = analysis[:3200].rsplit(" ", 1)[0] + "…"
+                try:
+                    await db.save_calculation(
+                        user_id, model, json.dumps(values, ensure_ascii=False),
+                        json.dumps(r, ensure_ascii=False), analysis
+                    )
+                except Exception:
+                    logging.exception("Failed to save calculation history")
                 return await m.answer(
                     "✅ Расчёт готов\n\n" + metrics +
                     "\n\n🤖 AI-анализ\n" + analysis +
-                    "\n\nЧтобы сделать новый расчёт: /calc"
+                    "\n\nИстория: /history · Новый расчёт: /calc"
                 )
             except Exception:
                 logging.exception("AI analysis failed after guided calculation")
                 return await m.answer(
-                    "✅ Расчёт готов\n\n" + metrics +
-                    "\n\n🤖 AI-анализ временно недоступен. Сам расчёт выполнен корректно." +
-                    "\n\nЧтобы сделать новый расчёт: /calc"
+                    try:
+                        await db.save_calculation(
+                            user_id, model, json.dumps(values, ensure_ascii=False),
+                            json.dumps(r, ensure_ascii=False), None
+                        )
+                    except Exception:
+                        logging.exception("Failed to save calculation history")
+                    return await m.answer(
+                        "✅ Расчёт готов\n\n" + metrics +
+                        "\n\n🤖 AI-анализ временно недоступен. Сам расчёт выполнен корректно." +
+                        "\n\nИстория: /history · Новый расчёт: /calc"
+                    )
                 )
         except ValueError as e:
             USER_FLOWS.pop(user_id, None)
