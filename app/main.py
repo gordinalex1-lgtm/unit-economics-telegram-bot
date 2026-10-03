@@ -198,7 +198,7 @@ async def text_(m: Message):
             try:
                 await db.save_calculation(
                     user_id, model, json.dumps(values, ensure_ascii=False),
-                    json.dumps(r, ensure_ascii=False), analysis
+                    json.dumps(r, ensure_ascii=False)
                 )
             except Exception:
                 logging.exception("Failed to save calculation history")
