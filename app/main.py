@@ -15,7 +15,7 @@ from app.calculations import (
     b2b_economics,
     target_profit_scenario,
 )
-from app.ai import ask, analyze_unit_economics
+from app.ai import ask, analyze_unit_economics, deterministic_analysis
 
 logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
 
@@ -264,7 +264,7 @@ async def text_(m: Message):
             if analysis:
                 response += "\\n\\n🤖 AI-анализ\\n" + analysis
             else:
-                response += "\\n\\n🤖 AI-анализ временно недоступен. Сам расчёт выполнен корректно."
+                response += "\\n\\n🤖 Анализ и рекомендации\\n" + deterministic_analysis(r)
             response += "\\n\\nИстория: /history · Новый расчёт: /calc"
             return await m.answer(response)
 
