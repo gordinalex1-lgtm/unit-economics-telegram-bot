@@ -131,10 +131,12 @@ async def shutdown():
             await _webhook_task
         except asyncio.CancelledError:
             pass
+    # Do not delete the webhook on shutdown.
+    # During a rolling deploy, the old instance can shut down after the new
+    # instance has registered the webhook and would otherwise remove it.
     try:
-        await bot.delete_webhook()
-    finally:
         await bot.session.close()
+    finally:
         await db.close()
 
 
