@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import asyncio
 
 from fastapi import FastAPI, Request, HTTPException
 from aiogram import Bot, Dispatcher, types
@@ -13,7 +14,7 @@ from app.calculations import (
     transactional_economics,
     b2b_economics,
 )
-from app.ai import ask
+from app.ai import ask, analyze_unit_economics
 
 logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
 
@@ -153,10 +154,23 @@ async def text_(m: Message):
             else:
                 r = b2b_economics(*values)
             USER_FLOWS.pop(user_id, None)
-            return await m.answer(
-                "✅ Расчёт готов\n\n" + _fmt(r) +
-                "\n\nЧтобы сделать новый расчёт: /calc"
-            )
+            metrics = _fmt(r)
+            try:
+                analysis = await asyncio.wait_for(analyze_unit_economics(r), timeout=25)
+                if len(analysis) > 3200:
+                    analysis = analysis[:3200].rsplit(" ", 1)[0] + "…"
+                return await m.answer(
+                    "✅ Расчёт готов\n\n" + metrics +
+                    "\n\n🤖 AI-анализ\n" + analysis +
+                    "\n\nЧтобы сделать новый расчёт: /calc"
+                )
+            except Exception:
+                logging.exception("AI analysis failed after guided calculation")
+                return await m.answer(
+                    "✅ Расчёт готов\n\n" + metrics +
+                    "\n\n🤖 AI-анализ временно недоступен. Сам расчёт выполнен корректно." +
+                    "\n\nЧтобы сделать новый расчёт: /calc"
+                )
         except ValueError as e:
             USER_FLOWS.pop(user_id, None)
             return await m.answer(f"Ошибка: {e}\nНачните новый расчёт: /calc")
@@ -175,7 +189,15 @@ async def text_(m: Message):
             r = b2b_economics(*map(float, p))
         else:
             return await m.answer("Используйте /start или /calc.")
-        await m.answer(_fmt(r))
+        metrics = _fmt(r)
+        try:
+            analysis = await asyncio.wait_for(analyze_unit_economics(r), timeout=25)
+            if len(analysis) > 3200:
+                analysis = analysis[:3200].rsplit(" ", 1)[0] + "…"
+            await m.answer(metrics + "\n\n🤖 AI-анализ\n" + analysis)
+        except Exception:
+            logging.exception("AI analysis failed after legacy calculation")
+            await m.answer(metrics + "\n\n🤖 AI-анализ временно недоступен.")
     except ValueError as e:
         await m.answer(f"Ошибка: {e}")
     except Exception:
