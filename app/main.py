@@ -13,6 +13,7 @@ from app.calculations import (
     subscription_economics,
     transactional_economics,
     b2b_economics,
+    target_profit_scenario,
 )
 from app.ai import ask, analyze_unit_economics
 
@@ -116,6 +117,62 @@ async def history_(m: Message):
     except Exception:
         logging.exception("History read failed")
         await m.answer("Не удалось загрузить историю. Попробуйте ещё раз.")
+
+
+@dp.message(Command("goal"))
+async def goal_(m: Message):
+    try:
+        target = float((m.text or "").split(maxsplit=1)[1].replace(",", "."))
+    except (IndexError, ValueError):
+        return await m.answer(
+            "Укажите целевую прибыль в месяц после /goal. Например:\n/goal 500000"
+        )
+
+    try:
+        items = await db.history(m.from_user.id, limit=1)
+        if not items:
+            return await m.answer("Сначала сделайте расчёт через /calc, затем задайте цель.")
+        latest = json.loads(items[0].result)
+        scenario = target_profit_scenario(latest, target)
+
+        lines = [
+            f"🎯 Целевая прибыль: {target:,.0f} ₽/мес.",
+            "",
+            f"Нужно клиентов: {scenario['required_customers']:.1f}",
+            f"Нужная выручка: {scenario['required_monthly_revenue']:,.0f} ₽/мес.",
+            f"Вклад одного клиента: {scenario['monthly_contribution_per_customer']:,.0f} ₽/мес.",
+            f"Максимальный CAC для окупаемости за 6 мес.: {scenario['max_cac_6m_payback']:,.0f} ₽",
+            f"Максимальный CAC для окупаемости за 12 мес.: {scenario['max_cac_12m_payback']:,.0f} ₽",
+        ]
+        if scenario["additional_customers"] is not None:
+            lines.insert(3, f"Дополнительно клиентов: {scenario['additional_customers']:.1f}")
+
+        analysis = None
+        try:
+            analysis = await asyncio.wait_for(
+                ask(
+                    "Проанализируй детерминированный сценарий достижения целевой месячной прибыли. "
+                    "Не пересчитывай цифры и не придумывай данные. "
+                    "Кратко укажи, какие рычаги стоит проверить в первую очередь.\n\n"
+                    + json.dumps(scenario, ensure_ascii=False, indent=2)
+                ),
+                timeout=25,
+            )
+        except Exception:
+            logging.exception("AI goal analysis failed")
+
+        response = "📊 Сценарий достижения цели\n\n" + "\n".join(lines)
+        if analysis:
+            if len(analysis) > 2500:
+                analysis = analysis[:2500].rsplit(" ", 1)[0] + "…"
+            response += "\n\n🤖 AI-анализ\n" + analysis
+        response += "\n\nОснова: последний расчёт из /history."
+        await m.answer(response)
+    except ValueError as e:
+        await m.answer(f"Ошибка: {e}")
+    except Exception:
+        logging.exception("Goal scenario failed")
+        await m.answer("Не удалось рассчитать сценарий. Проверьте последний расчёт через /history.")
 
 
 @dp.message(Command("help"))
